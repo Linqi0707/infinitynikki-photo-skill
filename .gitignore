@@ -1,0 +1,9 @@
+data/photos/*
+data/outfits/*
+data/camera_params/*
+*.db
+*.sqlite
+.env
+.venv/
+__pycache__/
+models/
