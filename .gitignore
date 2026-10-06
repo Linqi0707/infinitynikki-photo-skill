@@ -1,9 +1,7 @@
 data/photos/*
-data/outfits/*
-data/camera_params/*
+data/photos_metadata.json
 *.db
 *.sqlite
-.env
-.venv/
+*.zip
 __pycache__/
-models/
+workbuddy_skill/infinitynikki-photo-skill/references/local_config.json
