@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>无限暖暖摄影助手 - Photo Gallery</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="app-layout">
+        <!-- ===== Sidebar: Filters ===== -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>📷 InfinityNikki Photo</h1>
+            </div>
+
+            <!-- Stats -->
+            <div class="stats-box" id="statsBox">
+                <div class="stat-item">
+                    <div class="stat-value" id="statTotal">-</div>
+                    <div class="stat-label">照片</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="statOutfits">-</div>
+                    <div class="stat-label">搭配码</div>
+                </div>
+            </div>
+
+            <!-- Filter dimensions will be injected here -->
+            <div id="filterContainer"></div>
+
+            <button class="reset-btn" onclick="resetFilters()">
+                ↻ 重置所有筛选
+            </button>
+        </aside>
+
+        <!-- ===== Main Content ===== -->
+        <main class="main-content">
+            <!-- Search bar -->
+            <div class="search-bar-container">
+                <div class="search-bar">
+                    <span class="search-icon">🔍</span>
+                    <input
+                        type="text"
+                        id="searchInput"
+                        placeholder="按文件名搜索…"
+                        onkeyup="handleSearch(event)"
+                    >
+                </div>
+                <div class="result-info" id="resultInfo"></div>
+            </div>
+
+            <!-- Active filters display -->
+            <div class="active-filters" id="activeFilters"></div>
+
+            <!-- Photo wall -->
+            <div class="photo-wall" id="photoWall">
+                <!-- Skeletons will be injected on load -->
+            </div>
+
+            <!-- Pagination -->
+            <div class="pagination" id="pagination" style="display:none;">
+                <button class="page-btn" id="firstBtn" onclick="goToPage(1)" title="首页">«</button>
+                <button class="page-btn" id="prevBtn" onclick="changePage(-1)" title="上一页">‹</button>
+                <div class="page-numbers" id="pageNumbers"></div>
+                <button class="page-btn" id="nextBtn" onclick="changePage(1)" title="下一页">›</button>
+                <button class="page-btn" id="lastBtn" onclick="goToPage(totalPages)" title="尾页">»</button>
+                <span class="page-info" id="pageInfo"></span>
+                <span class="jump-group">
+                    第 <input type="number" class="jump-input" id="jumpInput" min="1" onkeydown="handlePageJump(event)"> 页
+                    <button class="page-btn" onclick="handleJumpBtn()">跳转</button>
+                </span>
+            </div>
+        </main>
+    </div>
+
+    <!-- ===== Detail Modal ===== -->
+    <div class="modal-overlay" id="detailModal" onclick="closeModal(event)">
+        <div class="modal" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h2 id="modalTitle">照片详情</h2>
+                <button class="modal-close" onclick="closeModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-image-section">
+                    <img id="modalImage" src="" alt="">
+                </div>
+                <div class="modal-info-section" id="modalInfo">
+                    <!-- Detail info injected here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
