@@ -10,6 +10,14 @@ let searchQuery = "";
 let searchMode = false;
 let currentPhotoData = null; // stores the currently open photo's full detail
 let editMode = false;
+let selectedPhotoId = null;
+let detailRequestId = 0;
+let gridColumns = 3;
+let batchMode = false;
+const batchSelection = new Set();
+let pendingBatchSemantics = null;
+let pendingBatchOutfit = null;
+let batchToastTimeout = null;
 
 // Tag label maps (English value -> Chinese label)
 const TAG_LABELS = {
@@ -53,10 +61,47 @@ const EDIT_FIELDS = [
 
 // ===== Init =====
 async function init() {
+    initializeGridColumns();
+    renderBatchFields();
     await loadTags();
     await loadStats();
     renderFilters();
     await loadPhotos();
+}
+
+function initializeGridColumns() {
+    try {
+        const storedColumns = Number(localStorage.getItem("photoGridColumns"));
+        if ([1, 2, 3].includes(storedColumns)) gridColumns = storedColumns;
+    } catch (e) {
+        console.warn("Could not read photo grid preference:", e);
+    }
+    applyGridColumns();
+}
+
+function setGridColumns(columns) {
+    if (![1, 2, 3].includes(columns)) return;
+    gridColumns = columns;
+    try {
+        localStorage.setItem("photoGridColumns", String(columns));
+    } catch (e) {
+        console.warn("Could not save photo grid preference:", e);
+    }
+    applyGridColumns();
+}
+
+function applyGridColumns() {
+    const wall = document.getElementById("photoWall");
+    if (wall) {
+        wall.classList.remove("grid-columns-1", "grid-columns-2", "grid-columns-3");
+        wall.classList.add(`grid-columns-${gridColumns}`);
+        wall.style.setProperty("--grid-columns", gridColumns);
+    }
+    document.querySelectorAll(".view-button").forEach((button) => {
+        const active = Number(button.dataset.columns) === gridColumns;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-pressed", String(active));
+    });
 }
 
 // ===== Load tag dimensions =====
@@ -192,6 +237,9 @@ function buildQueryString() {
 // ===== Load photos =====
 async function loadPhotos() {
     const wall = document.getElementById("photoWall");
+    document.getElementById("photoScrollArea").scrollTop = 0;
+    batchSelection.clear();
+    updateBatchSelectionUI();
     showSkeletons(wall);
 
     const endpoint = searchMode ? "/api/search" : "/api/photos";
@@ -199,6 +247,13 @@ async function loadPhotos() {
     try {
         const res = await fetch(`${API_BASE}${endpoint}?${buildQueryString()}`);
         const data = await res.json();
+
+        const availablePages = data.total_pages || 1;
+        if (currentPage > availablePages) {
+            currentPage = availablePages;
+            await loadPhotos();
+            return;
+        }
 
         totalPages = data.total_pages || 1;
         renderActiveFilters();
@@ -224,6 +279,7 @@ function showSkeletons(container) {
 // ===== Render photo cards =====
 function renderPhotos(photos) {
     const wall = document.getElementById("photoWall");
+    wall.classList.toggle("batch-mode", batchMode);
 
     if (!photos.length) {
         wall.innerHTML =
@@ -252,7 +308,8 @@ function renderPhotos(photos) {
                 .join("");
 
             return `
-                <div class="photo-card" onclick="openDetail('${photo.photo_id}')">
+                <div class="photo-card${selectedPhotoId === photo.photo_id ? " selected" : ""}${batchSelection.has(String(photo.photo_id)) ? " batch-selected" : ""}" data-photo-id="${photo.photo_id}" aria-pressed="${selectedPhotoId === photo.photo_id || batchSelection.has(String(photo.photo_id))}" onclick="handlePhotoCardClick('${photo.photo_id}')">
+                    <input class="batch-checkbox" type="checkbox" aria-label="选择照片" ${batchSelection.has(String(photo.photo_id)) ? "checked" : ""} onclick="event.stopPropagation()" onchange="toggleBatchSelection('${photo.photo_id}')">
                     <img
                         class="photo-card-img"
                         src="${API_BASE}/api/photo_file/${photo.photo_id}"
@@ -267,6 +324,198 @@ function renderPhotos(photos) {
             `;
         })
         .join("");
+}
+
+function handlePhotoCardClick(photoId) {
+    if (batchMode) toggleBatchSelection(photoId);
+    else openDetail(photoId);
+}
+
+function setBatchMode(enabled) {
+    batchMode = Boolean(enabled);
+    if (!batchMode) batchSelection.clear();
+    document.getElementById("photoWall").classList.toggle("batch-mode", batchMode);
+    document.getElementById("batchModeBtn").classList.toggle("active", batchMode);
+    updateBatchSelectionUI();
+    document.querySelectorAll(".photo-card").forEach((card) => {
+        card.classList.toggle("batch-selected", batchSelection.has(card.dataset.photoId));
+        card.setAttribute("aria-pressed", String(
+            batchSelection.has(card.dataset.photoId) || card.dataset.photoId === selectedPhotoId
+        ));
+        const checkbox = card.querySelector(".batch-checkbox");
+        if (checkbox) checkbox.checked = batchSelection.has(card.dataset.photoId);
+    });
+}
+
+function toggleBatchSelection(photoId) {
+    if (!batchMode) return;
+    const id = String(photoId);
+    if (batchSelection.has(id)) batchSelection.delete(id);
+    else batchSelection.add(id);
+    const card = [...document.querySelectorAll(".photo-card")].find((item) => item.dataset.photoId === id);
+    if (card) {
+        card.classList.toggle("batch-selected", batchSelection.has(id));
+        card.setAttribute("aria-pressed", String(
+            batchSelection.has(id) || card.dataset.photoId === selectedPhotoId
+        ));
+        const checkbox = card.querySelector(".batch-checkbox");
+        if (checkbox) checkbox.checked = batchSelection.has(id);
+    }
+    updateBatchSelectionUI();
+}
+
+function selectCurrentPage() {
+    document.querySelectorAll(".photo-card").forEach((card) => batchSelection.add(card.dataset.photoId));
+    setBatchMode(true);
+}
+
+function clearBatchSelection() {
+    batchSelection.clear();
+    updateBatchSelectionUI();
+    document.querySelectorAll(".photo-card").forEach((card) => {
+        card.classList.remove("batch-selected");
+        card.setAttribute("aria-pressed", String(card.dataset.photoId === selectedPhotoId));
+        const checkbox = card.querySelector(".batch-checkbox");
+        if (checkbox) checkbox.checked = false;
+    });
+}
+
+function updateBatchSelectionUI() {
+    const count = batchSelection.size;
+    const tools = document.getElementById("batchTools");
+    if (tools) tools.hidden = !batchMode;
+    const countEl = document.getElementById("batchSelectedCount");
+    if (countEl) countEl.textContent = `已选择 ${count} 张`;
+    const editButton = document.querySelector(".batch-edit-button");
+    if (editButton) editButton.disabled = count === 0;
+}
+
+function renderBatchFields() {
+    const container = document.getElementById("batchFields");
+    if (!container) return;
+    container.innerHTML = EDIT_FIELDS.map((field) => `
+        <label class="batch-field">
+            <span>${field.label}</span>
+            <select class="batch-select" data-field="${field.key}">
+                <option value="">保持原值</option>
+                ${Object.entries(field.options).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}
+            </select>
+        </label>
+    `).join("");
+}
+
+function openBatchEditor() {
+    if (!batchSelection.size) return;
+    pendingBatchSemantics = null;
+    pendingBatchOutfit = null;
+    document.getElementById("batchReview").hidden = true;
+    document.querySelectorAll(".batch-select").forEach((select) => { select.value = ""; });
+    document.getElementById("batchOutfitCode").value = "";
+    document.querySelector('input[name="batchOutfitMode"][value="missing"]').checked = true;
+    document.getElementById("batchOutfitWarning").hidden = true;
+    document.getElementById("confirmOutfitOverwrite").checked = false;
+    document.getElementById("confirmBatchButton").disabled = false;
+    document.getElementById("fillBatchOutfitButton").disabled = !currentPhotoData?.outfits?.[0]?.outfit_code;
+    document.getElementById("batchEditor").classList.add("show");
+}
+
+function fillBatchOutfitFromCurrent() {
+    const code = currentPhotoData?.outfits?.[0]?.outfit_code;
+    if (code) document.getElementById("batchOutfitCode").value = code;
+}
+
+function closeBatchEditor(event) {
+    if (event && event.target !== document.getElementById("batchEditor")) return;
+    document.getElementById("batchEditor").classList.remove("show");
+    document.getElementById("batchReview").hidden = true;
+    pendingBatchSemantics = null;
+    pendingBatchOutfit = null;
+}
+
+function previewBatchChanges() {
+    const semantics = {};
+    document.querySelectorAll(".batch-select").forEach((select) => {
+        if (select.value) semantics[select.dataset.field] = select.value;
+    });
+    const code = document.getElementById("batchOutfitCode").value.trim();
+    const outfit = code ? {
+        code,
+        overwrite: document.querySelector('input[name="batchOutfitMode"]:checked').value === "overwrite",
+    } : null;
+    if (!Object.keys(semantics).length && !outfit) {
+        window.alert("请至少选择语义标签或输入搭配码。");
+        return;
+    }
+    pendingBatchSemantics = semantics;
+    pendingBatchOutfit = outfit;
+    const changes = Object.entries(semantics).map(([key, value]) => {
+        const field = EDIT_FIELDS.find((item) => item.key === key);
+        return `<div>${field.label}：→ ${field.options[value]}</div>`;
+    }).join("");
+    const outfitChange = outfit ? `<div>搭配码：${escapeHtml(outfit.code)}</div>` : "";
+    document.getElementById("batchReviewCount").textContent = outfit
+        ? `即将为 ${batchSelection.size} 张照片设置相同搭配码：${outfit.code}`
+        : `即将修改 ${batchSelection.size} 张照片`;
+    document.getElementById("batchReviewChanges").innerHTML = `${changes}${outfitChange}`;
+    const overwriteWarning = Boolean(outfit?.overwrite);
+    document.getElementById("batchOutfitWarning").hidden = !overwriteWarning;
+    document.getElementById("confirmOutfitOverwrite").checked = false;
+    document.getElementById("confirmBatchButton").disabled = overwriteWarning;
+    document.getElementById("batchReview").hidden = false;
+}
+
+function toggleOverwriteConfirmation() {
+    const needsConfirmation = Boolean(pendingBatchOutfit?.overwrite);
+    document.getElementById("confirmBatchButton").disabled = needsConfirmation
+        && !document.getElementById("confirmOutfitOverwrite").checked;
+}
+
+function cancelBatchReview() {
+    document.getElementById("batchReview").hidden = true;
+    pendingBatchSemantics = null;
+    pendingBatchOutfit = null;
+}
+
+async function confirmBatchChanges() {
+    if ((!pendingBatchSemantics && !pendingBatchOutfit) || !batchSelection.size) return;
+    if (pendingBatchOutfit?.overwrite && !document.getElementById("confirmOutfitOverwrite").checked) return;
+    const button = document.getElementById("confirmBatchButton");
+    const photoIds = [...batchSelection];
+    const detailPhotoId = currentPhotoData?.photo_id;
+    const semantics = pendingBatchSemantics;
+    const outfit = pendingBatchOutfit;
+    const payload = { photo_ids: photoIds };
+    if (semantics && Object.keys(semantics).length) payload.semantics = semantics;
+    if (outfit) payload.outfit = outfit;
+    button.disabled = true;
+    try {
+        const res = await fetch(`${API_BASE}/api/photos/batch`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || res.statusText);
+        closeBatchEditor();
+        setBatchMode(false);
+        await loadPhotos();
+        if (outfit) {
+            showBatchToast(`已为 ${data.updated_count} 张照片设置搭配码，跳过 ${data.skipped_count} 张已有搭配码照片。`);
+        }
+        if (detailPhotoId && photoIds.includes(detailPhotoId)) await openDetail(detailPhotoId);
+    } catch (e) {
+        window.alert(`批量修改失败：${e.message}`);
+    } finally {
+        button.disabled = false;
+    }
+}
+
+function showBatchToast(message) {
+    const toast = document.getElementById("batchToast");
+    toast.textContent = message;
+    toast.classList.add("show");
+    window.clearTimeout(batchToastTimeout);
+    batchToastTimeout = window.setTimeout(() => toast.classList.remove("show"), 4000);
 }
 
 // ===== Render result info =====
@@ -378,8 +627,7 @@ function goToPage(page) {
         return;
     currentPage = page;
     loadPhotos();
-    document.querySelector(".main-content").scrollTop = 0;
-    window.scrollTo(0, 0);
+    document.getElementById("photoScrollArea").scrollTop = 0;
 }
 
 function changePage(delta) {
@@ -405,7 +653,7 @@ function handleJumpBtn() {
 }
 
 // ===== Photo Detail Modal =====
-async function openDetail(photoId) {
+async function openDetailLegacy(photoId) {
     const modal = document.getElementById("detailModal");
     const modalImage = document.getElementById("modalImage");
     const modalInfo = document.getElementById("modalInfo");
@@ -499,7 +747,7 @@ function renderDetailInfo(data) {
             .map(
                 (o) => `
             <div style="margin-bottom:12px;">
-                <div class="code-block">${escapeHtml(o.outfit_code)}</div>
+                ${renderCopyCode(o.outfit_code)}
                 ${
                     o.outfit_description
                         ? `<div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">${escapeHtml(o.outfit_description)}</div>`
@@ -520,7 +768,7 @@ function renderDetailInfo(data) {
             .map(
                 (c) => `
             <div style="margin-bottom:12px;">
-                <div class="code-block">${escapeHtml(c.camera_code)}</div>
+                ${renderCopyCode(c.camera_code)}
                 ${
                     c.description
                         ? `<div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">${escapeHtml(c.description)}</div>`
@@ -579,6 +827,7 @@ function renderDetailInfo(data) {
 function enterEditMode() {
     if (!currentPhotoData) return;
     editMode = true;
+    document.getElementById("detailEditButton").hidden = true;
     const modalInfo = document.getElementById("modalInfo");
     modalInfo.innerHTML = renderEditableInfo(currentPhotoData);
 }
@@ -709,6 +958,7 @@ async function saveEdit() {
         // Success: update currentPhotoData and re-render view mode
         currentPhotoData = data;
         editMode = false;
+        document.getElementById("detailEditButton").hidden = false;
         document.getElementById("modalInfo").innerHTML = renderDetailInfo(data);
         const newStatus = document.createElement("div");
         newStatus.className = "edit-status success";
@@ -734,17 +984,124 @@ async function saveEdit() {
 function cancelEdit() {
     if (!currentPhotoData) return;
     editMode = false;
+    document.getElementById("detailEditButton").hidden = false;
     document.getElementById("modalInfo").innerHTML =
         renderDetailInfo(currentPhotoData);
 }
 
 // ===== Close modal =====
-function closeModal(event) {
+function closeModalLegacy(event) {
     if (event && event.target !== document.getElementById("detailModal")) return;
     document.getElementById("detailModal").classList.remove("show");
     document.getElementById("modalImage").src = "";
     editMode = false;
     currentPhotoData = null;
+}
+
+function renderCopyCode(code) {
+    const value = code == null ? "" : String(code);
+    const displayValue = value || "尚未录入";
+    return `
+        <div class="copy-code-row">
+            <div class="code-block${value ? "" : " no-data"}">${escapeHtml(displayValue)}</div>
+            <button class="copy-code-button" type="button" data-copy-text="${escapeHtml(value)}" onclick="copyCode(this)" ${value ? "" : "disabled"}>复制</button>
+        </div>
+    `;
+}
+
+async function copyCode(button) {
+    if (!button.dataset.copyText) return;
+    try {
+        await navigator.clipboard.writeText(button.dataset.copyText);
+        button.textContent = "已复制";
+    } catch (e) {
+        button.textContent = "复制失败";
+    }
+    window.setTimeout(() => {
+        if (button.isConnected) button.textContent = "复制";
+    }, 1600);
+}
+
+async function openDetail(photoId) {
+    selectedPhotoId = photoId;
+    editMode = false;
+    currentPhotoData = null;
+    const requestId = ++detailRequestId;
+    document.querySelectorAll(".photo-card").forEach((card) => {
+        const selected = card.dataset.photoId === photoId;
+        card.classList.toggle("selected", selected);
+        card.setAttribute("aria-pressed", String(selected));
+    });
+    document.getElementById("detailEmpty").hidden = true;
+    document.getElementById("detailSelected").hidden = false;
+    document.getElementById("detailHeaderActions").hidden = true;
+    document.querySelector("#detailPanel h2").textContent = "照片详情";
+    document.getElementById("modalInfo").innerHTML = '<div class="detail-loading">加载中…</div>';
+    document.getElementById("detailPanel").classList.add("drawer-open");
+    document.getElementById("drawerBackdrop").classList.add("show");
+    try {
+        const res = await fetch(`${API_BASE}/api/photo/${photoId}`);
+        const data = await res.json();
+        if (requestId !== detailRequestId) return;
+        if (!res.ok || data.error) throw new Error(data.detail || data.error || res.statusText);
+        currentPhotoData = data;
+        document.querySelector("#detailPanel h2").textContent = "照片详情";
+        document.getElementById("detailHeaderActions").hidden = false;
+        document.getElementById("modalInfo").innerHTML = renderDetailInfo(data);
+    } catch (e) {
+        if (requestId !== detailRequestId) return;
+        document.getElementById("modalInfo").innerHTML = `<p class="detail-error">${escapeHtml(e.message)}</p>`;
+    }
+}
+
+function closeModal() {
+    closeDetailPanel();
+}
+
+function closeDetailPanel() {
+    document.getElementById("detailPanel").classList.remove("drawer-open");
+    document.getElementById("drawerBackdrop").classList.remove("show");
+}
+
+function openLightbox() {
+    if (!currentPhotoData) return;
+    document.getElementById("lightboxImage").src = `${API_BASE}/api/photo_file/${currentPhotoData.photo_id}`;
+    document.getElementById("lightbox").classList.add("show");
+}
+
+function closeLightbox(event) {
+    if (event && event.target !== document.getElementById("lightbox")) return;
+    document.getElementById("lightbox").classList.remove("show");
+    document.getElementById("lightboxImage").src = "";
+}
+
+async function deletePhoto(mode) {
+    if (!currentPhotoData) return;
+    const fileMode = mode === "file";
+    const firstConfirm = fileMode
+        ? `将原始照片“${currentPhotoData.filename}”从游戏相册移入项目 data/trash/。继续吗？`
+        : `确认从资料库移除“${currentPhotoData.filename}”？游戏目录中的原图不会被删除。`;
+    if (!window.confirm(firstConfirm)) return;
+    if (fileMode && !window.confirm("二次确认：原图将从游戏相册目录移走，之后可从 data/trash/ 手动恢复。确定继续？")) return;
+    const photoId = currentPhotoData.photo_id;
+    try {
+        const res = await fetch(`${API_BASE}/api/photo/${photoId}?mode=${mode}`, { method: "DELETE" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || res.statusText);
+        if (document.querySelectorAll(".photo-card").length === 1 && currentPage > 1) currentPage -= 1;
+        selectedPhotoId = null;
+        currentPhotoData = null;
+        editMode = false;
+        detailRequestId += 1;
+        document.getElementById("detailSelected").hidden = true;
+        document.getElementById("detailEmpty").hidden = false;
+        document.getElementById("detailHeaderActions").hidden = true;
+        document.querySelector("#detailPanel h2").textContent = "照片详情";
+        closeDetailPanel();
+        await Promise.all([loadPhotos(), loadStats()]);
+    } catch (e) {
+        window.alert(`删除失败：${e.message}`);
+    }
 }
 
 // ===== Utility =====

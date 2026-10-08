@@ -1,5 +1,5 @@
 # InfinityNikki Photo Skill
-![/web/image.png](image-1.png)
+![InfinityNikki Photo Web UI](web/image.png)
 
 A local multimodal photo management system for Infinity Nikki.
 

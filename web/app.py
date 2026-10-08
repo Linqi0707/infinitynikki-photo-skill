@@ -323,6 +323,134 @@ SEMANTIC_ALLOWED_VALUES = {
 }
 
 
+@app.route("/api/photos/batch", methods=["PATCH"])
+def api_photos_batch_update():
+    """Update only the supplied semantic fields for a set of photos."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "invalid_json"}), 400
+
+    photo_ids = body.get("photo_ids")
+    semantics = body.get("semantics", {})
+    outfit = body.get("outfit")
+    if not isinstance(photo_ids, list) or not photo_ids:
+        return jsonify({"error": "photo_ids_required"}), 400
+    if any(not isinstance(photo_id, str) or not photo_id for photo_id in photo_ids):
+        return jsonify({"error": "invalid_photo_ids"}), 400
+    photo_ids = list(dict.fromkeys(photo_ids))
+    if not isinstance(semantics, dict):
+        return jsonify({"error": "invalid_semantics"}), 400
+    if outfit is not None:
+        if not isinstance(outfit, dict):
+            return jsonify({"error": "invalid_outfit"}), 400
+        outfit_code = outfit.get("code")
+        overwrite = outfit.get("overwrite", False)
+        if not isinstance(outfit_code, str) or not outfit_code.strip():
+            return jsonify({"error": "outfit_code_required"}), 400
+        if not isinstance(overwrite, bool):
+            return jsonify({"error": "invalid_outfit_overwrite"}), 400
+        outfit_code = outfit_code.strip()
+    else:
+        outfit_code = None
+        overwrite = False
+    if not semantics and outfit is None:
+        return jsonify({"error": "batch_changes_required"}), 400
+
+    unknown_fields = set(semantics) - set(SEMANTIC_ALLOWED_VALUES)
+    if unknown_fields:
+        return jsonify({
+            "error": "invalid_semantic_fields",
+            "fields": sorted(unknown_fields),
+            "allowed": sorted(SEMANTIC_ALLOWED_VALUES),
+        }), 400
+
+    for field, value in semantics.items():
+        if not isinstance(value, str) or not value:
+            return jsonify({"error": "empty_semantic_value", "field": field}), 400
+        if value not in SEMANTIC_ALLOWED_VALUES[field]:
+            return jsonify({
+                "error": "validation_error",
+                "field": field,
+                "value": value,
+                "allowed": SEMANTIC_ALLOWED_VALUES[field],
+            }), 400
+
+    fields = list(semantics)
+    if fields:
+        placeholders = ", ".join("?" for _ in fields)
+        insert_columns = ["photo_id", *fields, "analyzed_at"]
+        insert_sql = (
+            f"INSERT INTO photo_semantics ({', '.join(insert_columns)}) "
+            f"VALUES (?, {placeholders}, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(photo_id) DO UPDATE SET "
+            + ", ".join(f"{field} = excluded.{field}" for field in fields)
+            + ", analyzed_at = CURRENT_TIMESTAMP"
+        )
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        id_placeholders = ", ".join("?" for _ in photo_ids)
+        cursor.execute(
+            f"SELECT photo_id FROM photos WHERE photo_id IN ({id_placeholders})",
+            photo_ids,
+        )
+        existing_ids = {row["photo_id"] for row in cursor.fetchall()}
+        missing_ids = [photo_id for photo_id in photo_ids if photo_id not in existing_ids]
+        if missing_ids:
+            conn.rollback()
+            return jsonify({"error": "photo_not_found", "photo_ids": missing_ids}), 404
+
+        if fields:
+            values = [semantics[field] for field in fields]
+            for photo_id in photo_ids:
+                cursor.execute(insert_sql, [photo_id, *values])
+
+        updated_count = len(photo_ids)
+        skipped_count = 0
+        if outfit is not None:
+            updated_count = 0
+            for photo_id in photo_ids:
+                cursor.execute(
+                    """
+                    SELECT outfit_id FROM outfits
+                    WHERE photo_id = ?
+                    ORDER BY created_at DESC, outfit_id DESC
+                    LIMIT 1
+                    """,
+                    (photo_id,),
+                )
+                existing_outfit = cursor.fetchone()
+                if existing_outfit:
+                    if overwrite:
+                        cursor.execute(
+                            "UPDATE outfits SET outfit_code = ? WHERE outfit_id = ?",
+                            (outfit_code, existing_outfit["outfit_id"]),
+                        )
+                        updated_count += 1
+                    else:
+                        skipped_count += 1
+                else:
+                    cursor.execute(
+                        "INSERT INTO outfits (photo_id, outfit_code) VALUES (?, ?)",
+                        (photo_id, outfit_code),
+                    )
+                    updated_count += 1
+        conn.commit()
+        return jsonify({
+            "success": True,
+            "selected_count": len(photo_ids),
+            "updated_count": updated_count,
+            "skipped_count": skipped_count,
+        })
+    except Exception as exc:
+        conn.rollback()
+        return jsonify({"error": "database_error", "detail": str(exc)}), 500
+    finally:
+        conn.close()
+
+
 @app.route("/api/photo/<photo_id>", methods=["PUT"])
 def api_photo_update(photo_id):
     """
@@ -534,6 +662,68 @@ def api_photo_update(photo_id):
 
     conn.close()
     return jsonify(result)
+
+
+@app.route("/api/photo/<photo_id>", methods=["DELETE"])
+def api_photo_delete(photo_id):
+    """Remove a photo from the library, optionally moving its original to trash."""
+    mode = request.args.get("mode")
+    if mode not in {"library", "file"}:
+        return jsonify({"error": "invalid_mode", "allowed": ["library", "file"]}), 400
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    moved_to = None
+    original_path = None
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            "SELECT filename, path FROM photos WHERE photo_id = ?", (photo_id,)
+        )
+        photo = cursor.fetchone()
+        if not photo:
+            conn.rollback()
+            return jsonify({"error": "photo_not_found", "photo_id": photo_id}), 404
+
+        if mode == "file":
+            original_path = Path(photo["path"])
+            if not original_path.is_file():
+                conn.rollback()
+                return jsonify({
+                    "error": "original_file_not_found",
+                    "detail": str(original_path),
+                }), 404
+
+            TRASH_DIR.mkdir(parents=True, exist_ok=True)
+            destination_name = f"{photo_id}_{original_path.name}"
+            moved_to = TRASH_DIR / destination_name
+            suffix = 1
+            while moved_to.exists():
+                moved_to = TRASH_DIR / f"{photo_id}_{suffix}_{original_path.name}"
+                suffix += 1
+            shutil.move(str(original_path), str(moved_to))
+
+        cursor.execute("DELETE FROM photo_semantics WHERE photo_id = ?", (photo_id,))
+        cursor.execute("DELETE FROM outfits WHERE photo_id = ?", (photo_id,))
+        cursor.execute("DELETE FROM camera_params WHERE photo_id = ?", (photo_id,))
+        cursor.execute("DELETE FROM photos WHERE photo_id = ?", (photo_id,))
+        conn.commit()
+        return jsonify({"deleted": True, "photo_id": photo_id, "mode": mode})
+    except Exception as exc:
+        conn.rollback()
+        restore_error = None
+        if moved_to and moved_to.exists() and original_path:
+            try:
+                original_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(moved_to), str(original_path))
+            except Exception as restore_exc:
+                restore_error = str(restore_exc)
+        response = {"error": "delete_failed", "detail": str(exc)}
+        if restore_error:
+            response["restore_error"] = restore_error
+        return jsonify(response), 500
+    finally:
+        conn.close()
 
 
 @app.route("/api/search")

@@ -35,43 +35,84 @@
         </aside>
 
         <!-- ===== Main Content ===== -->
-        <main class="main-content">
-            <!-- Search bar -->
-            <div class="search-bar-container">
-                <div class="search-bar">
-                    <span class="search-icon">🔍</span>
-                    <input
-                        type="text"
-                        id="searchInput"
-                        placeholder="按文件名搜索…"
-                        onkeyup="handleSearch(event)"
-                    >
+        <main class="main-content photo-main">
+            <header class="photo-header">
+                <div class="search-bar-container">
+                    <div class="search-bar">
+                        <span class="search-icon">🔍</span>
+                        <input
+                            type="text"
+                            id="searchInput"
+                            placeholder="按文件名搜索…"
+                            onkeyup="handleSearch(event)"
+                        >
+                    </div>
+                    <div class="result-info" id="resultInfo"></div>
                 </div>
-                <div class="result-info" id="resultInfo"></div>
-            </div>
 
-            <!-- Active filters display -->
-            <div class="active-filters" id="activeFilters"></div>
+                <div class="active-filters" id="activeFilters"></div>
 
-            <!-- Photo wall -->
-            <div class="photo-wall" id="photoWall">
-                <!-- Skeletons will be injected on load -->
-            </div>
+                <div class="photo-toolbar">
+                    <div class="view-switch" role="group" aria-label="照片墙列数">
+                        <span>视图</span>
+                        <button class="view-button" data-columns="1" onclick="setGridColumns(1)">1栏</button>
+                        <button class="view-button" data-columns="2" onclick="setGridColumns(2)">2栏</button>
+                        <button class="view-button" data-columns="3" onclick="setGridColumns(3)">3栏</button>
+                    </div>
+                    <div class="batch-toolbar">
+                        <button class="batch-mode-button" id="batchModeBtn" onclick="setBatchMode(!batchMode)">批量编辑</button>
+                        <div class="batch-tools" id="batchTools" hidden>
+                            <span id="batchSelectedCount">已选择 0 张</span>
+                            <button onclick="selectCurrentPage()">全选当前页</button>
+                            <button onclick="clearBatchSelection()">取消全选</button>
+                            <button class="batch-edit-button" onclick="openBatchEditor()">批量修改</button>
+                            <button onclick="setBatchMode(false)">退出</button>
+                        </div>
+                    </div>
+                </div>
+            </header>
 
-            <!-- Pagination -->
-            <div class="pagination" id="pagination" style="display:none;">
-                <button class="page-btn" id="firstBtn" onclick="goToPage(1)" title="首页">«</button>
-                <button class="page-btn" id="prevBtn" onclick="changePage(-1)" title="上一页">‹</button>
-                <div class="page-numbers" id="pageNumbers"></div>
-                <button class="page-btn" id="nextBtn" onclick="changePage(1)" title="下一页">›</button>
-                <button class="page-btn" id="lastBtn" onclick="goToPage(totalPages)" title="尾页">»</button>
-                <span class="page-info" id="pageInfo"></span>
-                <span class="jump-group">
-                    第 <input type="number" class="jump-input" id="jumpInput" min="1" onkeydown="handlePageJump(event)"> 页
-                    <button class="page-btn" onclick="handleJumpBtn()">跳转</button>
-                </span>
-            </div>
+            <section class="photo-scroll-area" id="photoScrollArea" aria-label="照片列表">
+                <div class="photo-wall" id="photoWall">
+                    <!-- Skeletons will be injected on load -->
+                </div>
+
+                <div class="pagination" id="pagination" style="display:none;">
+                    <button class="page-btn" id="firstBtn" onclick="goToPage(1)" title="首页">«</button>
+                    <button class="page-btn" id="prevBtn" onclick="changePage(-1)" title="上一页">‹</button>
+                    <div class="page-numbers" id="pageNumbers"></div>
+                    <button class="page-btn" id="nextBtn" onclick="changePage(1)" title="下一页">›</button>
+                    <button class="page-btn" id="lastBtn" onclick="goToPage(totalPages)" title="尾页">»</button>
+                    <span class="page-info" id="pageInfo"></span>
+                    <span class="jump-group">
+                        第 <input type="number" class="jump-input" id="jumpInput" min="1" onkeydown="handlePageJump(event)"> 页
+                        <button class="page-btn" onclick="handleJumpBtn()">跳转</button>
+                    </span>
+                </div>
+            </section>
         </main>
+        <aside class="detail-panel" id="detailPanel" aria-label="Photo details">
+            <div class="detail-panel-header">
+                <h2 id="detailTitle">Photo details</h2>
+                <div class="detail-header-actions" id="detailHeaderActions" hidden>
+                    <button class="detail-action" onclick="openLightbox()">查看</button>
+                    <button class="edit-btn" id="detailEditButton" onclick="enterEditMode()">编辑</button>
+                </div>
+                <button class="modal-close drawer-close" onclick="closeDetailPanel()" title="Close details">×</button>
+            </div>
+            <div class="detail-panel-content">
+                <div class="detail-empty" id="detailEmpty">请选择一张照片</div>
+                <div class="detail-selected" id="detailSelected" hidden>
+                    <div class="detail-info-section" id="modalInfo"></div>
+                    <div class="delete-group">
+                        <div class="info-group-title">删除</div>
+                        <button class="delete-button" onclick="deletePhoto('library')">从资料库移除</button>
+                        <button class="delete-button danger" onclick="deletePhoto('file')">删除本地原图…</button>
+                        <p>原图将移入项目的 data/trash/，不会立即永久删除。</p>
+                    </div>
+                </div>
+            </div>
+        </aside>
     </div>
 
     <!-- ===== Detail Modal ===== -->
@@ -85,13 +126,58 @@
                 <div class="modal-image-section">
                     <img id="modalImage" src="" alt="">
                 </div>
-                <div class="modal-info-section" id="modalInfo">
+                <div class="modal-info-section" id="legacyModalInfo">
                     <!-- Detail info injected here -->
                 </div>
             </div>
         </div>
     </div>
 
+    <div class="drawer-backdrop" id="drawerBackdrop" onclick="closeDetailPanel()"></div>
+    <div class="lightbox" id="lightbox" onclick="closeLightbox(event)">
+        <button class="lightbox-close" onclick="closeLightbox()" title="Close image">×</button>
+        <img id="lightboxImage" src="" alt="">
+    </div>
+    <div class="batch-modal-overlay" id="batchEditor" onclick="closeBatchEditor(event)">
+        <section class="batch-modal" onclick="event.stopPropagation()" aria-labelledby="batchEditorTitle">
+            <header class="batch-modal-header">
+                <h2 id="batchEditorTitle">批量修改语义标签</h2>
+                <button class="modal-close" onclick="closeBatchEditor()" title="关闭">×</button>
+            </header>
+            <div class="batch-modal-body" id="batchFields"></div>
+            <section class="batch-outfit-section">
+                <div class="batch-outfit-heading">
+                    <h3>批量设置搭配码</h3>
+                    <button class="btn-cancel batch-fill-outfit" id="fillBatchOutfitButton" type="button" onclick="fillBatchOutfitFromCurrent()">使用当前照片搭配码</button>
+                </div>
+                <label class="batch-field">
+                    <span>搭配码</span>
+                    <input class="batch-outfit-input" id="batchOutfitCode" type="text" autocomplete="off">
+                </label>
+                <fieldset class="batch-outfit-modes">
+                    <label><input type="radio" name="batchOutfitMode" value="missing" checked> 仅设置尚未录入搭配码的照片</label>
+                    <label><input type="radio" name="batchOutfitMode" value="overwrite"> 覆盖已存在的搭配码</label>
+                </fieldset>
+            </section>
+            <div class="batch-review" id="batchReview" hidden>
+                <strong id="batchReviewCount"></strong>
+                <div id="batchReviewChanges"></div>
+                <div class="batch-outfit-warning" id="batchOutfitWarning" hidden>
+                    <p>部分照片已经存在搭配码，继续操作将覆盖已有数据。</p>
+                    <label><input type="checkbox" id="confirmOutfitOverwrite" onchange="toggleOverwriteConfirmation()"> 我已了解并确认覆盖</label>
+                </div>
+                <div class="batch-review-actions">
+                    <button class="btn-cancel" onclick="cancelBatchReview()">取消</button>
+                    <button class="btn-save" id="confirmBatchButton" onclick="confirmBatchChanges()">确认修改</button>
+                </div>
+            </div>
+            <footer class="batch-modal-footer">
+                <button class="btn-cancel" onclick="closeBatchEditor()">关闭</button>
+                <button class="btn-save" onclick="previewBatchChanges()">预览修改</button>
+            </footer>
+        </section>
+    </div>
+    <div class="batch-toast" id="batchToast" role="status" aria-live="polite"></div>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

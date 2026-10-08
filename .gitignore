@@ -1,10 +1,40 @@
+# Photo data
 data/photos/*
+data/trash/*
 data/photos_metadata.json
+
+# Database
 *.db
 *.sqlite
-*.zip
-__pycache__/
-models/
+*.sqlite3
 
+# Local configuration
 references/config.json
 workbuddy_skill/infinitynikki-photo-skill/references/local_config.json
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Models
+models/
+
+# Web / Node
+node_modules/
+dist/
+build/
+
+# Logs
+*.log
+
+# Archives
+*.zip
+
+# IDE / OS
+.idea/
+.DS_Store
+Thumbs.db
