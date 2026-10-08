@@ -4,4 +4,7 @@ data/photos_metadata.json
 *.sqlite
 *.zip
 __pycache__/
+models/
+
+references/config.json
 workbuddy_skill/infinitynikki-photo-skill/references/local_config.json

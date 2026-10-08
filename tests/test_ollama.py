@@ -4,7 +4,8 @@ import requests
 response = requests.post(
     "http://localhost:11434/api/chat",
     json={
-        "model": "qwen2.5:7b",
+        # "model": "qwen2.5:7b",
+        "model": "qwen2.5-vl:7b",
         "messages": [
             {
                 "role": "user",
@@ -17,4 +18,6 @@ response = requests.post(
 )
 
 
-print(response.json()["message"]["content"])
+print(response.status_code)
+
+print(response.text)

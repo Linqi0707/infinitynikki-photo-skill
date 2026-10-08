@@ -7,7 +7,7 @@ DB_PATH = PROJECT_ROOT / "data" / "infinitynikki_photos.db"
 
 
 def get_pending_photos(limit=10):
-    """获取待分析照片"""
+    """获取未完成语义分析的照片"""
 
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -17,7 +17,11 @@ def get_pending_photos(limit=10):
     cursor.execute("""
         SELECT *
         FROM photos
-        WHERE analysis_status IN ('pending','failed')
+        WHERE photo_id NOT IN
+        (
+            SELECT photo_id
+            FROM photo_semantics
+        )
         LIMIT ?
     """, (limit,))
 
@@ -26,7 +30,6 @@ def get_pending_photos(limit=10):
     conn.close()
 
     return photos
-
 
 
 def save_photo_semantics(photo_id, semantics):
@@ -65,10 +68,7 @@ def save_photo_semantics(photo_id, semantics):
     conn.commit()
     conn.close()
 
-    print(
-        f"语义保存成功: {photo_id}"
-    )
-
+    print(f"语义保存成功: {photo_id}")
 
 
 def update_analysis_status(photo_id, status):
